@@ -175,11 +175,12 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	char	*output = aligned_alloc(16, alloc_size);
 	long long row = 0;
 	size_t	out_i = 0;
+
 	while (out_i < len) {
 		long long col = 0;
 		while (col < 6) {
 			long long i = -row * header.width + col;
-			if (len >= 6) {
+			if (len -out_i >= 6) {
 				__m128i val= _mm_loadu_si64(data + i);
 				_mm_storeu_si64(output + out_i, val);
 				output[out_i + 3] = output[out_i + 4];
@@ -187,22 +188,23 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 				output[out_i + 5] = output[out_i + 6];
 				out_i += 6;
 				col += 2;
-			} else if (len >= 3) {
+			} else if (len - out_i >= 3) {
 				memcpy(output + out_i, data + i, 3);
 				out_i += 3;
-				break ;
-			} else if (len == 2) {
+				col++;
+			} else if (len - out_i == 2) {
 				memcpy(output + out_i, data + i, 2);
 				out_i += 2;
-				break ;
-			} else if (len == 1) {
+				goto ret;
+			} else if (len - out_i == 1) {
 				memcpy(output + out_i, data + i, 1);
 				out_i += 1;
-				break ;
+				goto ret;
 			}
 		}
 		row++;
 	}
+ret:
 	write(1, output, len);
 	free(output);
 }
