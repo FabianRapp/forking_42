@@ -68,7 +68,6 @@ struct file_content   read_entire_file(char* filename) {
 		stat(filename, &input_file_stat);
 		file_size = input_file_stat.st_size;
 		file_data = mmap(0, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, input_file_fd, 0);
-		close(input_file_fd);
 	}
 	return (struct file_content){file_data, file_size};
 }
@@ -117,14 +116,14 @@ typedef struct {
 	long long end_row;
 }	t_thread_data;
 
-void *find_header_thread(void *args) {
+void	*find_header_thread(void *args) {
 	t_thread_data *data = (t_thread_data *)args;
 	data->data = find_header(data->start_row, data->end_row, data->data, data->width);
 	return (0);
 }
 
 t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
-	const u8		thread_count = 6;
+	const u8		thread_count = 8;
 	pthread_t		threads[thread_count];
 	t_thread_data	thread_data[thread_count];
 	long long		rows_per_thread = height / thread_count;
@@ -194,11 +193,9 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 				col++;
 			} else if (len - out_i == 2) {
 				memcpy(output + out_i, data + i, 2);
-				out_i += 2;
 				goto ret;
 			} else if (len - out_i == 1) {
 				memcpy(output + out_i, data + i, 1);
-				out_i += 1;
 				goto ret;
 			}
 		}
@@ -206,7 +203,6 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	}
 ret:
 	write(1, output, len);
-	free(output);
 }
 
 int	main(int argc, char** argv) {
@@ -224,6 +220,5 @@ int	main(int argc, char** argv) {
 	print_msg_basic(header, file_content);
 
 
-	munmap(file_content.data, file_content.size);
 	return 0;
 }
