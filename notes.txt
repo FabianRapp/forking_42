@@ -6,6 +6,7 @@ length of msg. (right most pixel), always diffrent color than the header
 127, 188, 217 (b,g,r)
 
 length of msg.:
+first row, 8th pixel
 in header
 1 pixel
 add(int(r, b) channels of pixel)

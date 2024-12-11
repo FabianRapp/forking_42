@@ -6,7 +6,7 @@ INCLUDES := -I./includes
 RNG := false
 NDBUG := -DNDBUG
 #-Werror
-CFLAGS := -Wall -Wextra -g -O0 -lpthread $(INCLUDES) -DRANDOM=$(RNG) \
+CFLAGS := -Wall -Wextra -g -O0 -fsanitize=undefined -lpthread $(INCLUDES) -DRANDOM=$(RNG) \
 
 #-Wno-shadow -Wshadow
 

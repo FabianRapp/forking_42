@@ -3,6 +3,10 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include "main.h"
+#include <errno.h>
+
+#include <assert.h>
 
 typedef char i8;
 typedef unsigned char u8;
@@ -10,6 +14,23 @@ typedef unsigned short u16;
 typedef int i32;
 typedef unsigned u32;
 typedef unsigned long u64;
+
+typedef enum {
+	BLUE,
+	GREEN,
+	RED,
+	COUNT,
+}	t_colors;
+
+typedef union u_pixel {
+	//u32		raw;
+	struct {
+		u8	b;
+		u8	g;
+		u8	r;
+		u8	a;
+	};
+}	t_pixel;
 
 #define PRINT_ERROR(cstring) write(STDERR_FILENO, cstring, sizeof(cstring) - 1)
 
@@ -20,8 +41,7 @@ struct bmp_header {
 	u32 file_size;
 	u32 unused_0;
 	u32 data_offset;
-
-	// Note: info header
+// Note: info header
 	u32 info_header_size;
 	u32 width; // in px
 	u32 height; // in px
@@ -32,10 +52,11 @@ struct bmp_header {
 	// Note: there are more stuff there but it is not important here
 };
 
-struct file_content {
+typedef struct file_content {
 	i8*   data;
 	u32   size;
-};
+}	t_file;
+
 
 struct file_content   read_entire_file(char* filename) {
 	char* file_data = 0;
@@ -51,7 +72,101 @@ struct file_content   read_entire_file(char* filename) {
 	return (struct file_content){file_data, file_size};
 }
 
-int main(int argc, char** argv) {
+int	possible_header_pixel(t_pixel p) {
+	if (p.b == 127 && p.g == 188 && p.r == 217) {
+		return (1);
+	}
+	return (0);
+}
+
+t_pixel	*find_header(t_pixel *data, long long height, long long width) {
+	for (long long row = 7; row < height; row++) {
+		for (long long col = 0; col < width - 8; col++) {
+			long long	guess_col = 0;
+			/* check if header is horizontal*/
+			while (guess_col < 7) {
+				if (!possible_header_pixel(data[col + guess_col + width * row])) {
+					break ;
+				}
+				guess_col++;
+			}
+			if (guess_col != 7) {
+				continue ;
+			} else {
+				printf("matches header first row\n");
+			}
+
+			/* check if header is to the left up */
+			for (long long guess_row = 0; guess_row < 8; guess_row++) {
+				assert(row >= guess_row);
+				if (!possible_header_pixel(data[col + width * (row - guess_row)])) {
+					break ;
+				}
+				if (guess_row == 7) {
+					printf("valid header found!\n");
+					//printf("row: %lu, col: %lu\n", row, col);
+					//for (size_t i =0; i < width; i++) {
+					//	data[row * width + col + i].r = 0xff;
+					//	data[row * width + col + i].g = 0x0;
+					//	data[row * width + col + i].b = 0x0;
+					//}
+					return (data + row * width + col);
+				}
+			}
+		}
+	}
+	printf("err: nothing found!\n");
+	return (NULL);
+}
+
+t_pixel	*skip_header(t_pixel *header, size_t height, size_t width) {
+	return (header - width - width);
+}
+
+void	print_msg_basic(struct bmp_header header, t_file file) {
+	void *base = file.data;
+	t_pixel	*data =  (t_pixel *) (file.data + header.data_offset);
+	
+	data = find_header(data, header.height, header.width);
+	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
+	printf("len = %u\n", len);
+
+	//data = skip_header(data, header.height, header.width);
+	char *chars = (char *)data;
+	long long row = 2;
+	while (1) {
+		for (long long col = 2; col < 6; col++) {
+			long long i = row - col * header.width;
+			chars = (char *)(data + i);
+			if (len >= 3) {
+				//write(1, data, 3);
+				printf("%c%c%c", chars[0], chars[1], chars[2]);
+				len -= 3;
+			} else if (len == 2) {
+				//write(1, data, 2);
+				printf("%c%c", chars[0], chars[1]);
+				return ;
+			} else if (len == 1) {
+				//write(1, data, 1);
+				printf("%c", chars[0]);
+				return ;
+			} else {
+				return ;
+			}
+		}
+		row++;
+	}
+	//int fd = open("test.bmp", O_WRONLY | O_CREAT, 777);
+	//write(fd, file.data, file.size);
+	//printf("errno: %s\n", strerror(errno));
+	//for (size_t col = 0; col < 6; col++) {
+	//	printf("%c%c%c", data[col].b, data[col].g, data[col].r);
+	//	//printf("%x", data[col].raw);
+	//	data++;
+	//}
+	printf("\n");
+}
+int	main(int argc, char** argv) {
 	if (argc != 2) {
 		PRINT_ERROR("Usage: decode <input_filename>\n");
 		return 1;
@@ -61,22 +176,11 @@ int main(int argc, char** argv) {
 		PRINT_ERROR("Failed to read file\n");
 		return 1;
 	}
-	struct bmp_header* header = (struct bmp_header*) file_content.data;
-	printf(
-		"signature: %.2s\n"
-		"file_size: %u\n"
-		"data_offset: %u\n"
-		"info_header_size: %u\n"
-		"width: %u\n"
-		"height: %u\n"
-		"planes: %i\n"
-		"bit_per_px: %i\n"
-		"compression_type: %u\n"
-		"compression_size: %u\n"
-		, header->signature, header->file_size, header->data_offset,
-		header->info_header_size, header->width, header->height,
-		header->number_of_planes, header->bit_per_pixel,
-		header->compression_type, header->compressed_image_size
-	);
+	struct bmp_header header = ((struct bmp_header*) file_content.data)[0];
+
+	print_msg_basic(header, file_content);
+
+
+	munmap(file_content.data, file_content.size);
 	return 0;
 }
