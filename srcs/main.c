@@ -3,10 +3,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
-#include "main.h"
-#include <errno.h>
-
-#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
 
 typedef char i8;
 typedef unsigned char u8;
@@ -79,8 +77,8 @@ int	possible_header_pixel(t_pixel p) {
 	return (0);
 }
 
-t_pixel	*find_header(t_pixel *data, long long height, long long width) {
-	for (long long row = 7; row < height; row++) {
+t_pixel	*find_header(long long start_row, long long end_row, t_pixel *data, long long width) {
+	for (long long row = start_row; row < end_row; row++) {
 		for (long long col = 0; col < width - 8; col++) {
 			long long	guess_col = 0;
 			/* check if header is horizontal*/
@@ -97,7 +95,6 @@ t_pixel	*find_header(t_pixel *data, long long height, long long width) {
 
 			/* check if header is to the left up */
 			for (long long guess_row = 0; guess_row < 8; guess_row++) {
-				assert(row >= guess_row);
 				if (!possible_header_pixel(data[col + width * (row - guess_row)])) {
 					break ;
 				}
@@ -116,6 +113,48 @@ t_pixel	*find_header(t_pixel *data, long long height, long long width) {
 	return (NULL);
 }
 
+typedef struct {
+	t_pixel	*data;
+	long long width;
+	long long start_row;
+	long long end_row;
+}	t_thread_data;
+
+void *find_header_thread(void *args) {
+	t_thread_data *data = (t_thread_data *)args;
+	data->data = find_header(data->start_row, data->end_row, data->data, data->width);
+	return (0);
+}
+
+t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
+	const u8 thread_count = 6;
+	pthread_t	threads[thread_count];
+	t_pixel *returns[thread_count];
+	t_thread_data	thread_data[thread_count];
+	
+	long long rows_per_thread = height / thread_count;
+
+	for (u8 i = 0; i < thread_count; i++) {
+		thread_data[i].width = width;
+		thread_data[i].start_row = 7 + rows_per_thread * i;
+		thread_data[i].end_row = thread_data[i].start_row + rows_per_thread;
+		thread_data[i].data = data;
+		if (thread_data[i].end_row > height) {
+			thread_data[i].end_row = height;
+		}
+		pthread_create(threads + i, 0, find_header_thread,  thread_data + i);
+
+	}
+	for (size_t i = 0; i < thread_count; i++) {
+		pthread_join(threads[i], 0);
+		if (thread_data[i].data) {
+			return (thread_data[i].data);
+		}
+	}
+	__builtin_unreachable();
+	return (0);
+}
+
 t_pixel	*skip_header(t_pixel *header, size_t height, size_t width) {
 	return (header - width - width + 2);
 }
@@ -124,7 +163,7 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	void *base = file.data;
 	t_pixel	*data =  (t_pixel *) (file.data + header.data_offset);
 	
-	data = find_header(data, header.height, header.width);
+	data = find_header_threaded(data, header.height, header.width);
 	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
 
 	data = skip_header(data, header.height, header.width);
@@ -135,16 +174,13 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 			long long i = -row * header.width + col;
 			chars = (char *)(data + i);
 			if (len >= 3) {
-				//write(1, data, 3);
-				printf("%c%c%c", data[i].b, data[i].g, data[i].r);
+				write(1, data + i, 3);
 				len -= 3;
 			} else if (len == 2) {
-				//write(1, data, 2);
-				printf("%c%c", chars[0], chars[1]);
+				write(1, data + i, 2);
 				return ;
 			} else if (len == 1) {
-				//write(1, data, 1);
-				printf("%c", chars[0]);
+				write(1, data + i, 1);
 				return ;
 			} else {
 				return ;
@@ -152,15 +188,6 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 		}
 		row++;
 	}
-	//int fd = open("test.bmp", O_WRONLY | O_CREAT, 777);
-	//write(fd, file.data, file.size);
-	//printf("errno: %s\n", strerror(errno));
-	//for (size_t col = 0; col < 6; col++) {
-	//	printf("%c%c%c", data[col].b, data[col].g, data[col].r);
-	//	//printf("%x", data[col].raw);
-	//	data++;
-	//}
-	printf("\n");
 }
 int	main(int argc, char** argv) {
 	if (argc != 2) {
