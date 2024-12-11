@@ -1,0 +1,24 @@
+header:
+L shaped
+8 wide 8 high
+Beginning of msg.
+length of msg. (right most pixel), always diffrent color than the header
+127, 188, 217 (b,g,r)
+
+length of msg.:
+in header
+1 pixel
+add(int(r, b) channels of pixel)
+ -> max add(255, 255) == 510
+
+data:
+1 pixel gap between header and data
+each pixel 3 ASCII chars
+BGR
+left to right, top to bottom
+
+
+pixel:
+4 bytes
+b, g, r, last: a(unused)
+
