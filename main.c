@@ -143,7 +143,6 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 		pthread_join(threads[i], 0);
 		if (thread_data[i].data) {
 			for (size_t j = i + 1; j < thread_count; j++) {
-				pthread_join(threads[j], 0);
 			}
 			return (thread_data[i].data);
 		}
