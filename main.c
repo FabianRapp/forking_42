@@ -58,7 +58,7 @@ typedef struct file_content {
 	u32   size;
 }	t_file;
 
-
+/* todo: read into ring buffer with 1 thread while others work */
 struct file_content   read_entire_file(char* filename) {
 	char* file_data = 0;
 	unsigned long	file_size = 0;
@@ -122,6 +122,7 @@ void	*find_header_thread(void *args) {
 	return (0);
 }
 
+/* todo: simd */
 t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
 	const u8		thread_count = 8;
 	pthread_t		threads[thread_count];
@@ -142,8 +143,6 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 	for (size_t i = 0; i < thread_count; i++) {
 		pthread_join(threads[i], 0);
 		if (thread_data[i].data) {
-			for (size_t j = i + 1; j < thread_count; j++) {
-			}
 			return (thread_data[i].data);
 		}
 	}
@@ -202,6 +201,7 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	}
 ret:
 	write(1, output, len);
+	exit(0);
 }
 
 int	main(int argc, char** argv) {
