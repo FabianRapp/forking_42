@@ -23,14 +23,14 @@ typedef enum {
 }	t_colors;
 
 typedef union u_pixel {
-	//u32		raw;
+	u32		raw;
 	struct {
 		u8	b;
 		u8	g;
 		u8	r;
 		u8	a;
-	};
-}	t_pixel;
+	}__attribute__((packed));
+}	__attribute__((packed)) t_pixel;
 
 #define PRINT_ERROR(cstring) write(STDERR_FILENO, cstring, sizeof(cstring) - 1)
 
@@ -93,7 +93,6 @@ t_pixel	*find_header(t_pixel *data, long long height, long long width) {
 			if (guess_col != 7) {
 				continue ;
 			} else {
-				printf("matches header first row\n");
 			}
 
 			/* check if header is to the left up */
@@ -103,7 +102,6 @@ t_pixel	*find_header(t_pixel *data, long long height, long long width) {
 					break ;
 				}
 				if (guess_row == 7) {
-					printf("valid header found!\n");
 					//printf("row: %lu, col: %lu\n", row, col);
 					//for (size_t i =0; i < width; i++) {
 					//	data[row * width + col + i].r = 0xff;
@@ -115,12 +113,11 @@ t_pixel	*find_header(t_pixel *data, long long height, long long width) {
 			}
 		}
 	}
-	printf("err: nothing found!\n");
 	return (NULL);
 }
 
 t_pixel	*skip_header(t_pixel *header, size_t height, size_t width) {
-	return (header - width - width);
+	return (header - width - width + 2);
 }
 
 void	print_msg_basic(struct bmp_header header, t_file file) {
@@ -129,18 +126,17 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	
 	data = find_header(data, header.height, header.width);
 	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
-	printf("len = %u\n", len);
 
-	//data = skip_header(data, header.height, header.width);
+	data = skip_header(data, header.height, header.width);
 	char *chars = (char *)data;
-	long long row = 2;
+	long long row = 0;
 	while (1) {
-		for (long long col = 2; col < 6; col++) {
-			long long i = row - col * header.width;
+		for (long long col = 0; col < 6; col++) {
+			long long i = -row * header.width + col;
 			chars = (char *)(data + i);
 			if (len >= 3) {
 				//write(1, data, 3);
-				printf("%c%c%c", chars[0], chars[1], chars[2]);
+				printf("%c%c%c", data[i].b, data[i].g, data[i].r);
 				len -= 3;
 			} else if (len == 2) {
 				//write(1, data, 2);
