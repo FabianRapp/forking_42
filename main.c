@@ -153,7 +153,7 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 	return (0);
 }
 
-t_pixel	*skip_header(t_pixel *header, size_t height, size_t width) {
+t_pixel	*skip_header(t_pixel *header, size_t width) {
 	return (header - width - width + 2);
 }
 
@@ -170,13 +170,12 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	
 	data = find_header_threaded(data, header.height, header.width);
 	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
-	data = skip_header(data, header.height, header.width);
+	data = skip_header(data, header.width);
 	size_t	alloc_size = (len + 32 + 15) & ~((size_t)15);
 	char	*output = aligned_alloc(16, alloc_size);
 	long long row = 0;
 	size_t	out_i = 0;
-	long long base_len = len;
-	while (len > 0) {
+	while (out_i < len) {
 		long long col = 0;
 		while (col < 6) {
 			long long i = -row * header.width + col;
@@ -187,30 +186,27 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 				output[out_i + 4] = output[out_i + 5];
 				output[out_i + 5] = output[out_i + 6];
 				out_i += 6;
-				len -= 6;
 				col += 2;
 			} else if (len >= 3) {
 				memcpy(output + out_i, data + i, 3);
 				out_i += 3;
-				len -= 3;
-				col++;
+				break ;
 			} else if (len == 2) {
 				memcpy(output + out_i, data + i, 2);
-				len -= 2;
 				out_i += 2;
-				col++;
+				break ;
 			} else if (len == 1) {
 				memcpy(output + out_i, data + i, 1);
-				len -= 1;
 				out_i += 1;
-				col++;
+				break ;
 			}
 		}
 		row++;
 	}
-	write(1, output, base_len);
+	write(1, output, len);
 	free(output);
 }
+
 int	main(int argc, char** argv) {
 	if (argc != 2) {
 		PRINT_ERROR("Usage: decode <input_filename>\n");

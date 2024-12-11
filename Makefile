@@ -6,7 +6,7 @@ INCLUDES := -I./includes
 RNG := false
 NDBUG := -DNDBUG
 #-Werror
-CFLAGS := -Wall -Wextra -g -O0 -fsanitize=undefined -lpthread $(INCLUDES) -DRANDOM=$(RNG) \
+CFLAGS := -Wall -Wextra -Werror -g -O0 -fsanitize=undefined $(INCLUDES) -DRANDOM=$(RNG) \
 
 #-Wno-shadow -Wshadow
 
@@ -30,9 +30,10 @@ CLEAR	=	\033[0m
 
 all: $(NAME)
 
-$(NAME): $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) -o $(NAME)
-
+$(NAME):
+	gcc -O0 -Wall -Wextra -Werror main.c -o decoder -lpthread
+#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
+ 
 normal: $(NAME)
 	@echo "$(GREEN) Compiled $(NAME) $(CLEAR)"
 
