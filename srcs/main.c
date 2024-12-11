@@ -1,10 +1,13 @@
 #include <unistd.h>
+#include <immintrin.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef char i8;
 typedef unsigned char u8;
@@ -99,12 +102,6 @@ t_pixel	*find_header(long long start_row, long long end_row, t_pixel *data, long
 					break ;
 				}
 				if (guess_row == 7) {
-					//printf("row: %lu, col: %lu\n", row, col);
-					//for (size_t i =0; i < width; i++) {
-					//	data[row * width + col + i].r = 0xff;
-					//	data[row * width + col + i].g = 0x0;
-					//	data[row * width + col + i].b = 0x0;
-					//}
 					return (data + row * width + col);
 				}
 			}
@@ -127,12 +124,10 @@ void *find_header_thread(void *args) {
 }
 
 t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
-	const u8 thread_count = 6;
-	pthread_t	threads[thread_count];
-	t_pixel *returns[thread_count];
+	const u8		thread_count = 6;
+	pthread_t		threads[thread_count];
 	t_thread_data	thread_data[thread_count];
-	
-	long long rows_per_thread = height / thread_count;
+	long long		rows_per_thread = height / thread_count;
 
 	for (u8 i = 0; i < thread_count; i++) {
 		thread_data[i].width = width;
@@ -148,6 +143,9 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 	for (size_t i = 0; i < thread_count; i++) {
 		pthread_join(threads[i], 0);
 		if (thread_data[i].data) {
+			for (size_t j = i + 1; j < thread_count; j++) {
+				pthread_join(threads[j], 0);
+			}
 			return (thread_data[i].data);
 		}
 	}
@@ -159,35 +157,59 @@ t_pixel	*skip_header(t_pixel *header, size_t height, size_t width) {
 	return (header - width - width + 2);
 }
 
+typedef union u_row_data {
+	unsigned long long	raw;
+	struct {
+		t_pixel	a;
+		t_pixel	b;
+	};
+}	 t_row_data;
+
 void	print_msg_basic(struct bmp_header header, t_file file) {
-	void *base = file.data;
 	t_pixel	*data =  (t_pixel *) (file.data + header.data_offset);
 	
 	data = find_header_threaded(data, header.height, header.width);
 	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
-
 	data = skip_header(data, header.height, header.width);
-	char *chars = (char *)data;
+	size_t	alloc_size = (len + 32 + 15) & ~((size_t)15);
+	char	*output = aligned_alloc(16, alloc_size);
 	long long row = 0;
-	while (1) {
-		for (long long col = 0; col < 6; col++) {
+	size_t	out_i = 0;
+	long long base_len = len;
+	while (len > 0) {
+		long long col = 0;
+		while (col < 6) {
 			long long i = -row * header.width + col;
-			chars = (char *)(data + i);
-			if (len >= 3) {
-				write(1, data + i, 3);
+			if (len >= 6) {
+				__m128i val= _mm_loadu_si64(data + i);
+				_mm_storeu_si64(output + out_i, val);
+				output[out_i + 3] = output[out_i + 4];
+				output[out_i + 4] = output[out_i + 5];
+				output[out_i + 5] = output[out_i + 6];
+				out_i += 6;
+				len -= 6;
+				col += 2;
+			} else if (len >= 3) {
+				memcpy(output + out_i, data + i, 3);
+				out_i += 3;
 				len -= 3;
+				col++;
 			} else if (len == 2) {
-				write(1, data + i, 2);
-				return ;
+				memcpy(output + out_i, data + i, 2);
+				len -= 2;
+				out_i += 2;
+				col++;
 			} else if (len == 1) {
-				write(1, data + i, 1);
-				return ;
-			} else {
-				return ;
+				memcpy(output + out_i, data + i, 1);
+				len -= 1;
+				out_i += 1;
+				col++;
 			}
 		}
 		row++;
 	}
+	write(1, output, base_len);
+	free(output);
 }
 int	main(int argc, char** argv) {
 	if (argc != 2) {
