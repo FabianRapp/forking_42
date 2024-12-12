@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
+#include "libft_macros.h"
 
 typedef char i8;
 typedef unsigned char u8;
@@ -19,6 +19,8 @@ typedef unsigned long u64;
 
 #define HEADER_WIDTH 7
 #define HEADER_HEIGHT 8
+#define SIMD_ALIGNMENT 16
+//#define NDEBUG
 
 typedef enum {
 	BLUE,
@@ -77,13 +79,15 @@ struct file_content   read_entire_file(char* filename) {
 	return (struct file_content){file_data, file_size};
 }
 
-static __attribute__((always_inline)) int	possible_header_pixel(t_pixel p) {
-	if (p.b == 127 && p.g == 188 && p.r == 217) {
+static __attribute__((always_inline))
+int	possible_header_pixel(t_pixel p) {
+	if (p.b == 0x7f && p.g == 0xbc && p.r == 0xd9) {
 		return (1);
 	}
 	return (0);
 }
 
+/*todo: optimize bounds checks */
 t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long long width, long long height) {
 
 	printf("found a header pixel\n");
@@ -109,7 +113,7 @@ t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long lon
 	row = row + down_count;
 
 	printf("went up and down\n");
-	assert(up_count + down_count == HEADER_HEIGHT - 1);
+	FT_ASSERT(up_count + down_count == HEADER_HEIGHT - 1);
 
 	long long	right_count = 0;
 	while (right_count < HEADER_WIDTH - 1) {
@@ -127,8 +131,31 @@ t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long lon
 		return (NULL);
 	}
 	printf("went right\n");
-	assert(right_count == HEADER_WIDTH - 1);
+	FT_ASSERT(right_count == HEADER_WIDTH - 1);
 	return (data + col + width * row);
+}
+
+/* returns offset of src to the first header pixel,
+ * -1 if there is no header pixel in the givne n bytes.
+ * Assumes src to be 16 byte allinged data
+*/
+//static __attribute__((always_inline))
+int	first_header_pixel(t_pixel *src) {
+	FT_ASSERT(((uintptr_t)src) % 16 == 0);
+	__m128i	mask = _mm_set1_epi32(0xffbcd900);//4th byte does not matter
+	__m128i	data = _mm_load_si128((__m128i *)(src));
+	__m128i	cmp8 = _mm_cmpeq_epi8(mask, data);
+	int16_t	matches_bit_pattern = _mm_movemask_epi8(cmp8);
+	int16_t	bit_mask = 0b111;
+	int8_t	offset = 0;
+	while (offset > (-16 / (int8_t)sizeof(t_pixel))) {
+		if ((matches_bit_pattern & bit_mask) == bit_mask) {
+			printf("return offset: %d\n", offset);
+			return (offset);
+		}
+		offset--;
+	}
+	return (-1);
 }
 
 /*
@@ -179,33 +206,45 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 */
-/* todo: simd */
-/* return -1 if there is no header pixel in the givne n bytes */
-int	first_header_pixel(t_pixel *data) {
-	if (possible_header_pixel(*data)) {
-		return (0);
-	}
-	return (-1);
-}
+
 
 t_pixel	*find_header(long long start_row, long long end_row, t_pixel *data, long long width) {
-	long long	row = end_row;
-	for (; row >= start_row; row -= HEADER_HEIGHT) {
-		long long col = width - HEADER_WIDTH;
+	FT_ASSERT(sizeof(t_pixel) == 4);
+	long long	row = start_row + 7;
+	for (; row <= end_row; row += HEADER_HEIGHT) {
 		t_pixel	*cur_row = data + row * width;
-		for (; col >= 0; col -= 1) {
-			if (col > 16) {
-				int	tmp = first_header_pixel(cur_row + col);
-				if (tmp == -1) {
-					continue ;
+		long long col =  0;
+	
+		/* alignment, inefficient but not significant */
+		while (col < width && 0 != (((uintptr_t) (cur_row + col)) % SIMD_ALIGNMENT)) {
+			if (possible_header_pixel(data[col + row * width])) {
+				t_pixel	*header = find_header_start(data, row, col, width, end_row);
+				if (header) {
+					return (header);
 				}
-				col += tmp;
-			} else if (!possible_header_pixel(data[col + row * width])) {
-				continue ;
 			}
-			t_pixel	*header = find_header_start(data, row, col, width, end_row);
-			if (header) {
-				return (header);
+			col++;
+		}
+
+		while (col < width) {
+			if (col <= width - 16) {
+				FT_ASSERT(((uintptr_t)(cur_row + col)) % 16 == 0);
+				int	tmp = first_header_pixel(cur_row + col);
+				if (tmp != -1) {
+					t_pixel	*header = find_header_start(data, row, col, width, end_row);
+					if (header) {
+						return (header);
+					}
+				}
+				col += 4;
+			} else {
+				if (possible_header_pixel(data[col + row * width])) {
+					t_pixel	*header = find_header_start(data, row, col, width, end_row);
+					if (header) {
+						return (header);
+					}
+				}
+				col++;
 			}
 		}
 	}
@@ -272,7 +311,7 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	
 	//data = find_header_threaded(data, header.height, header.width);
 	data = find_header(0, header.height - 1, data, header.width);
-	assert(data);
+	FT_ASSERT(data);
 	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
 	printf("len: %u\n", len);
 	data = skip_header(data, header.width);
