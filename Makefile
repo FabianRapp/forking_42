@@ -28,11 +28,17 @@ CLEAR	=	\033[0m
 
 .PHONY: all normal leaks fsan clean fclean re compile_commands
 
+
+TASK_COMPILE = gcc -O0 -Wall -Wextra -Werror main.c -o decoder -lpthread
+
+
 all: $(NAME)
 
-$(NAME):
-	gcc -O0 -Wall -Wextra -Werror main.c -o decoder -lpthread
-#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
+
+
+$(NAME): main.c
+	gcc -O0 -Wall -Wextra -Werror -g -fsanitize=address main.c -o decoder -lpthread
+	#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
  
 normal: $(NAME)
 	@echo "$(GREEN) Compiled $(NAME) $(CLEAR)"

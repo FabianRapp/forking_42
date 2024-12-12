@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 typedef char i8;
 typedef unsigned char u8;
@@ -15,6 +16,9 @@ typedef unsigned short u16;
 typedef int i32;
 typedef unsigned u32;
 typedef unsigned long u64;
+
+#define HEADER_WIDTH 7
+#define HEADER_HEIGHT 8
 
 typedef enum {
 	BLUE,
@@ -73,37 +77,135 @@ struct file_content   read_entire_file(char* filename) {
 	return (struct file_content){file_data, file_size};
 }
 
-int	possible_header_pixel(t_pixel p) {
+static __attribute__((always_inline)) int	possible_header_pixel(t_pixel p) {
 	if (p.b == 127 && p.g == 188 && p.r == 217) {
 		return (1);
 	}
 	return (0);
 }
 
-t_pixel	*find_header(long long start_row, long long end_row, t_pixel *data, long long width) {
-	for (long long row = start_row; row < end_row; row++) {
-		for (long long col = 0; col < width - 8; col++) {
-			long long	guess_col = 0;
-			/* check if header is horizontal*/
-			while (guess_col < 7) {
-				if (!possible_header_pixel(data[col + guess_col + width * row])) {
-					break ;
-				}
-				guess_col++;
-			}
-			if (guess_col != 7) {
-				continue ;
-			} else {
-			}
+t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long long width, long long height) {
 
-			/* check if header is to the left up */
-			for (long long guess_row = 0; guess_row < 8; guess_row++) {
-				if (!possible_header_pixel(data[col + width * (row - guess_row)])) {
-					break ;
+	printf("found a header pixel\n");
+
+	long long	down_count = 0;
+	while (row + down_count + 1 < height && down_count < HEADER_HEIGHT - 1 && possible_header_pixel(data[col + (row + 1 + down_count) * width])) {
+		down_count++;
+	}
+
+	long long	up_count = 0;
+	while (row - up_count - 1 >= 0 && up_count < HEADER_HEIGHT - 1) {
+		if (!possible_header_pixel(data[col + (row - 1 - up_count) * width])) {
+			printf("cant go up duo to no heade pixel\n");
+			break ;
+		}
+		up_count++;
+	}
+
+	if (up_count + down_count < HEADER_HEIGHT - 1) {
+		return (NULL);
+	}
+
+	row = row + down_count;
+
+	printf("went up and down\n");
+	assert(up_count + down_count == HEADER_HEIGHT - 1);
+
+	long long	right_count = 0;
+	while (right_count < HEADER_WIDTH - 1) {
+		if (col + right_count + 1 >= width) {
+			printf("break: reached width\n");
+			break ;
+		} else if (!possible_header_pixel(data[col + right_count + 1 + width * row])) {
+			printf("break duo to no header\n");
+			break ;
+		}
+		right_count++;
+		printf("right count: %lld\n", right_count);
+	}
+	if (right_count < HEADER_WIDTH - 1) {
+		return (NULL);
+	}
+	printf("went right\n");
+	assert(right_count == HEADER_WIDTH - 1);
+	return (data + col + width * row);
+}
+
+/*
+todo: find smart way
+pattern to find:
+
+1
+1
+1
+1
+1
+1
+1
+1111111
+
+Pattern to check atleast one pixel of each 'L' pattern
+(memory pattern, not pattern on the actual img),
+x: point to check:
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+*/
+/* todo: simd */
+/* return -1 if there is no header pixel in the givne n bytes */
+int	first_header_pixel(t_pixel *data) {
+	if (possible_header_pixel(*data)) {
+		return (0);
+	}
+	return (-1);
+}
+
+t_pixel	*find_header(long long start_row, long long end_row, t_pixel *data, long long width) {
+	long long	row = end_row;
+	for (; row >= start_row; row -= HEADER_HEIGHT) {
+		long long col = width - HEADER_WIDTH;
+		t_pixel	*cur_row = data + row * width;
+		for (; col >= 0; col -= 1) {
+			if (col > 16) {
+				int	tmp = first_header_pixel(cur_row + col);
+				if (tmp == -1) {
+					continue ;
 				}
-				if (guess_row == 7) {
-					return (data + row * width + col);
-				}
+				col += tmp;
+			} else if (!possible_header_pixel(data[col + row * width])) {
+				continue ;
+			}
+			t_pixel	*header = find_header_start(data, row, col, width, end_row);
+			if (header) {
+				return (header);
 			}
 		}
 	}
@@ -168,8 +270,11 @@ typedef union u_row_data {
 void	print_msg_basic(struct bmp_header header, t_file file) {
 	t_pixel	*data =  (t_pixel *) (file.data + header.data_offset);
 	
-	data = find_header_threaded(data, header.height, header.width);
+	//data = find_header_threaded(data, header.height, header.width);
+	data = find_header(0, header.height - 1, data, header.width);
+	assert(data);
 	uint16_t	len = ((uint16_t)data[7].r) + data[7].b;
+	printf("len: %u\n", len);
 	data = skip_header(data, header.width);
 	size_t	alloc_size = (len + 32 + 15) & ~((size_t)15);
 	char	*output = aligned_alloc(16, alloc_size);
