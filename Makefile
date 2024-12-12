@@ -26,7 +26,7 @@ YELLOW	=	\033[33m
 CYAN	=	\033[0;36m
 CLEAR	=	\033[0m
 
-.PHONY: all normal leaks fsan clean fclean re compile_commands
+.PHONY: all normal leaks fsan clean fclean re compile_commands prof decoder
 
 
 TASK_COMPILE = gcc -O0 -Wall -Wextra -Werror main.c -o decoder -lpthread
@@ -38,7 +38,7 @@ $(NAME): main.c
 	gcc -O0 -Wall -Wextra -Werror -g -fsanitize=undefined main.c -o decoder -lpthread
 	#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
 
-prof:
+prof: main.c
 	gcc -O0 -Wall -Wextra -Werror -g -pg main.c -o decoder -lpthread
 
 normal: $(NAME)
