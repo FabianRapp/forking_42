@@ -92,44 +92,38 @@ int	possible_header_pixel(t_pixel p) {
 	return (0);
 }
 
-/*todo: optimize bounds checks */
+/*todo: this is slow but should only matter for input crafted to breake this*/
 t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long long width, long long height) {
+	long long	hheight = 1;
 
-	long long	down_count = 0;
-	while (row + down_count + 1 < height && down_count < HEADER_HEIGHT - 1 && possible_header_pixel(data[col + (row + 1 + down_count) * width])) {
-		down_count++;
-	}
-
-	long long	up_count = 0;
-	while (row - up_count - 1 >= 0 && up_count < HEADER_HEIGHT - 1) {
-		if (!possible_header_pixel(data[col + (row - 1 - up_count) * width])) {
+	while (row >= 0 && hheight < 8) {
+		if (!possible_header_pixel(data[col + (row - 1) * width])) {
 			break ;
 		}
-		up_count++;
+		row--;
+		hheight++;
 	}
-
-	if (up_count + down_count < HEADER_HEIGHT - 1) {
-		return (NULL);
-	}
-
-	row = row + down_count;
-
-	FT_ASSERT(up_count + down_count == HEADER_HEIGHT - 1);
-
-	long long	right_count = 0;
-	while (right_count < HEADER_WIDTH - 1) {
-		if (col + right_count + 1 >= width) {
-			break ;
-		} else if (!possible_header_pixel(data[col + right_count + 1 + width * row])) {
-			break ;
+	while (hheight < HEADER_HEIGHT) {
+		if (!possible_header_pixel(data[col + (row + hheight) * width])) {
+			return (NULL);
 		}
-		right_count++;
+		hheight++;
 	}
-	if (right_count < HEADER_WIDTH - 1) {
-		return (NULL);
+	row = row + 7;
+	hheight -= 7;
+	while (hheight && row < height) {
+		for (size_t i = 0; i < 7; i++) {
+			if (!possible_header_pixel(data[col + row * width])) {
+				continue ;
+			}
+			if (i == 6) {
+				return (data + col + row * width);
+			}
+		}
+		row++;
+		hheight--;
 	}
-	FT_ASSERT(right_count == HEADER_WIDTH - 1);
-	return (data + col + width * row);
+	return (NULL);
 }
 
 /* returns offset of src to the first header pixel,
@@ -272,7 +266,6 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 	t_thread_data	thread_data[thread_count];
 	long long		rows_per_thread = height / thread_count;
 	long long		cur_start = 0;
-
 
 	for (u8 i = 0; i < thread_count; i++) {
 		thread_data[i].width = width;
