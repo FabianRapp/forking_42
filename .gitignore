@@ -2,7 +2,6 @@ objs/*
 *.a
 *.out
 decoder
-*.bmp
 compile_commands.json
 *.dSYM/*
 libft/*

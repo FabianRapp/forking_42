@@ -10,6 +10,11 @@
 #include <string.h>
 #include "libft_macros.h"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wattributes"
+
 typedef char i8;
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -201,7 +206,6 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 00000000000000000000000000000000
 00000000000000000000000000000000
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
 */
 
 /* acts like the given pixel range are the full image and optizes of that */
@@ -318,7 +322,6 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	//data = find_header(0, header.height - 1, data, header.width);
 	FT_ASSERT(data);
 	uint16_t	len = ((uint16_t)data[7].r) + ((uint16_t)data[7].b);
-	printf("len: %u\n", (unsigned)len);
 	data = skip_header(data, header.width);
 	size_t	alloc_size = (len + 32 + 15) & ~((size_t)15);
 	char	*output = aligned_alloc(16, alloc_size);
