@@ -37,7 +37,10 @@ all: $(NAME)
 $(NAME): main.c
 	gcc -O0 -Wall -Wextra -Werror -g -fsanitize=undefined main.c -o decoder -lpthread
 	#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
- 
+
+prof:
+	gcc -O0 -Wall -Wextra -Werror -g -pg main.c -o decoder -lpthread
+
 normal: $(NAME)
 	@echo "$(GREEN) Compiled $(NAME) $(CLEAR)"
 
