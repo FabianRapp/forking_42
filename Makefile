@@ -37,7 +37,7 @@ all: $(NAME)
 
 
 $(NAME): main.c
-	gcc -O0 -Wall -Wextra -Werror -g -fsanitize=address main.c -o decoder -lpthread
+	gcc -O0 -Wall -Wextra -Werror -g -fsanitize=undefined main.c -o decoder -lpthread
 	#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
  
 normal: $(NAME)
