@@ -20,11 +20,15 @@
 
 #  else //NDEBUG
 #   include <assert.h>
-
+#	include <errno.h>
+#	include <string.h>
 #  ifndef FT_ASSERT
 #   define FT_ASSERT(cond) \
 	do { \
 		if (!(cond)) {\
+			if (errno) { \
+				printf("%s\n", strerror(errno)); \
+			} \
 			assert(cond); \
 		} \
 	} while(0)

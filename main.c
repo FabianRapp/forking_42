@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libft_macros.h"
+#include <errno.h>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
@@ -26,7 +27,7 @@ typedef unsigned long u64;
 #define HEADER_HEIGHT 8
 #define SIMD_ALIGNMENT 16
 
-#define NDEBUG
+//#define NDEBUG
 
 typedef enum {
 	BLUE,
@@ -70,7 +71,19 @@ typedef struct file_content {
 	u32   size;
 }	t_file;
 
-/* todo: read into ring buffer with 1 thread while others work */
+void	print_128_8(__m128i value) {
+	uint8_t arr[16];
+
+	_mm_storeu_si128((__m128i*)arr, value);
+	printf("__m128i val:");
+	for (size_t i = 0; i < sizeof arr / sizeof arr[0]; i++) {
+		printf("%x, ", arr[i]);
+	}
+	printf("\n");
+}
+
+/* todo: simpliy allocated memory mangment by removing the header here
+	and removing it from the logic later on*/
 struct file_content   read_entire_file(char* filename) {
 	char* file_data = 0;
 	unsigned long	file_size = 0;
@@ -78,8 +91,25 @@ struct file_content   read_entire_file(char* filename) {
 	if (input_file_fd >= 0) {
 		struct stat input_file_stat = {0};
 		stat(filename, &input_file_stat);
-		file_size = input_file_stat.st_size;
-		file_data = mmap(0, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, input_file_fd, 0);
+		if (1) {
+			size_t	alloc_size = (input_file_stat.st_size + 4 + 15) & ~((size_t)15);
+			struct bmp_header	*header = aligned_alloc(16, alloc_size);
+			FT_ASSERT(header);
+			file_data = (char *)header;
+			read(input_file_fd, header, sizeof *header);
+			size_t	trash_len = header->data_offset - sizeof *header;
+			read(input_file_fd, header + sizeof *header, trash_len);
+			FT_ASSERT(errno == 0);
+			while ((uintptr_t)(((char *)header) + header->data_offset) % 16 != 0) {
+				header->data_offset++;
+			}
+			read(input_file_fd, ((char *)header) + header->data_offset, input_file_stat.st_size - sizeof *header);
+			close(input_file_fd);
+		} else {
+			file_size = (unsigned long)input_file_stat.st_size;
+			file_data = mmap(0, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, input_file_fd, 0);
+		}
+		FT_ASSERT(errno == 0);
 	}
 	return (struct file_content){file_data, file_size};
 }
@@ -92,58 +122,95 @@ int	possible_header_pixel(t_pixel p) {
 	return (0);
 }
 
+/* called from find_header_start only */
+static __attribute__((always_inline))
+t_pixel	*bottom_of_L(t_pixel *data, long long row, long long col, long long width) {
+	if (row < 7 || col == 0) {
+		return (NULL);
+	}
+	long long left_count = 0;
+	while (left_count < 6) {
+		if (!possible_header_pixel(data[col - left_count - 1 + row * width])) {
+			break ;
+		}
+		left_count++;
+	}
+	if (!left_count) {
+		return (NULL);
+	}
+	col -= left_count;
+	long long right_count = left_count;
+	while (right_count < 6) {
+		if (!possible_header_pixel(data[col + right_count + 1 + row * width])) {
+			return (NULL);
+		}
+		right_count++;
+	}
+	for (long long i = 1; i < 8; i++) {
+		if (!possible_header_pixel(data[col + (row - i) * width])) {
+			return (NULL);
+		}
+	}
+	return (data + col + row * width);
+}
+
 /*todo: this is slow but should only matter for input crafted to breake this*/
 /*todo: handle if the input pixel is on the horizontal of the 'L' */
 t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long long width, long long height) {
-	long long	hheight = 1;
+	long long	header_height = 1;
 
-	while (row >= 0 && hheight < 8) {
-		if (!possible_header_pixel(data[col + (row - 1) * width])) {
+	long long input_row = row;
+	while (row >= 0 && header_height < 8) {
+		if (!possible_header_pixel(data[col + (row - header_height) * width])) {
 			break ;
 		}
-		row--;
-		hheight++;
+		header_height++;
 	}
-	while (hheight < HEADER_HEIGHT) {
-		if (!possible_header_pixel(data[col + (row + hheight) * width])) {
-			return (NULL);
+	row -= header_height - 1;
+	if (row + 7 >= height) {
+		return (bottom_of_L(data, input_row, col, width));
+	}
+	while (header_height < HEADER_HEIGHT) {
+		if (!possible_header_pixel(data[col + (row + header_height) * width])) {
+			return (bottom_of_L(data, input_row, col, width));
 		}
-		hheight++;
+		header_height++;
 	}
-	row = row + 7;
-	hheight -= 7;
-
-
+	row += 7;
 	if (col + 7 < width) {
-		while (hheight && row < height) {
-			for (long long i = 1; i < 7; i++) {
-				if (!possible_header_pixel(data[col + i + row * width])) {
-					continue ;
-				}
-				if (i == 6 && !possible_header_pixel(data[col + i + 1 + row * width])) {
-					printf("row: %lld\ncol: %lld\n", row, col);;
-					return (data + col + row * width);
-				}
+		for (long long i = 1; i < 7; i++) {
+			if (!possible_header_pixel(data[col + i + row * width])) {
+				break ;
 			}
-			row++;
-			hheight--;
+			if (i == 6 && !possible_header_pixel(data[col + i + 1 + row * width])) {
+				return (data + col + row * width);
+			}
 		}
+		row++;
+	} else {
 	}
 	return (NULL);
 }
 
+
+// TODO: currenly operats on unalined data
 /* returns offset of src to the first header pixel,
  * -1 if there is no header pixel in the givne n bytes.
  * Assumes src to be 16 byte allinged data.
- * Searched for the 4 byte pattern 0xffbcd9 and the 4th byte anything.
+ * Searched for the 4 byte pattern 0x7bcd9 and the 4th byte anything.
 */
-static __attribute__((always_inline))
+//static __attribute__((always_inline))
 int8_t	first_header_pixel(t_pixel *src) {
-	FT_ASSERT(((uintptr_t)src) % 16 == 0);
-	__m128i	mask = _mm_set1_epi32(0xffbcd900);//4th byte does not matter
-	__m128i	data = _mm_load_si128((__m128i *)(src));
+	//FT_ASSERT(((uintptr_t)src) % 16 == 0);
+	__m128i	mask = _mm_set1_epi32(0x00d9bc7f);//4th byte does not matter
+	__m128i	data = _mm_loadu_si128((__m128i *)(src));//todo: should me load not loadu
 	__m128i	cmp8 = _mm_cmpeq_epi8(mask, data);
 	int16_t	matches_bit_pattern = _mm_movemask_epi8(cmp8);
+	if (matches_bit_pattern) {
+		//print_128_8(mask);
+		//print_128_8(data);
+		//print_128_8(cmp8);
+	}
 	/* unrolled loop duo to mandetory O0 flag and no other flags allowed */
 	if ((matches_bit_pattern & 0b1110) == 0b1110) {
 		return (0);
@@ -211,14 +278,22 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 /* acts like the given pixel range are the full image and optizes of that */
 t_pixel	*find_header(long long start_row, long long end_row, long long height, t_pixel *data, long long width) {
 	FT_ASSERT(sizeof(t_pixel) == 4);
-	long long	row = start_row + 7;
-	for (; row <= end_row; row += HEADER_HEIGHT) {
+	//long long	row = start_row + 7;
+	long long	row = start_row;
+	long long next_end = end_row + HEADER_HEIGHT - (end_row % HEADER_HEIGHT);
+	next_end = next_end >= height ? height - 1 : next_end;
+	end_row = end_row % HEADER_HEIGHT ? next_end : end_row;
+
+	//for (; row <= end_row; row += 8) {
+	for (; row <= end_row; row += 1) {
+		FT_ASSERT(row >= 0);
+		FT_ASSERT(row < height);
 		t_pixel	*cur_row = data + row * width;
 		long long col =  0;
-	
 		/* alignment, inefficient but not significant */
-		while (col < width && 0 != (((uintptr_t) (cur_row + col)) % SIMD_ALIGNMENT)) {
-			if (possible_header_pixel(data[col + row * width])) {
+		//while (col < width && 0 != (((uintptr_t) (cur_row + col)) % 16)) {
+		while (col < width) {
+			if (possible_header_pixel(cur_row[col])) {
 				t_pixel	*header = find_header_start(data, row, col, width, height);
 				if (header) {
 					return (header);
@@ -226,20 +301,19 @@ t_pixel	*find_header(long long start_row, long long end_row, long long height, t
 			}
 			col++;
 		}
-
 		while (col < width) {
-			if (col <= width - 16) {
-				FT_ASSERT(((uintptr_t)(cur_row + col)) % 16 == 0);
+			if (col <= width - 4) {
+				//FT_ASSERT(((uintptr_t)(cur_row + col)) % 16 == 0);
 				int8_t	tmp = first_header_pixel(cur_row + col);
 				if (tmp != -1) {
-					t_pixel	*header = find_header_start(data, row, col, width, height);
+					t_pixel	*header = find_header_start(data, row, col + tmp, width, height);
 					if (header) {
 						return (header);
 					}
 				}
 				col += 4;
 			} else {
-				if (possible_header_pixel(data[col + row * width])) {
+				if (possible_header_pixel(cur_row[col])) {
 					t_pixel	*header = find_header_start(data, row, col, width, height);
 					if (header) {
 						return (header);
@@ -248,6 +322,9 @@ t_pixel	*find_header(long long start_row, long long end_row, long long height, t
 				col++;
 			}
 		}
+		//printf("width: %lld; height: %lld\n", width, height);
+		//printf("row: %lld\n", row);
+		//printf("col: %lld\n", col);
 	}
 	return (NULL);
 }
@@ -267,12 +344,13 @@ void	*find_header_thread(void *args) {
 }
 
 t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
-	const u8		thread_count = 1;
+	const u8		thread_count = 10;
 	pthread_t		threads[thread_count];
 	t_thread_data	thread_data[thread_count];
 	long long		rows_per_thread = height / thread_count;
 	long long		cur_start = 0;
-
+	
+	printf("height: %lld; width: %lld\n", height, width);
 	for (u8 i = 0; i < thread_count; i++) {
 		thread_data[i].width = width;
 		thread_data[i].height = height;
@@ -282,8 +360,7 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 		cur_start += rows_per_thread;
 		thread_data[i].end_row = cur_start - 1;
 		thread_data[i].data = data;
-		if (thread_data[i].end_row >= height) {
-			FT_ASSERT(0);
+		if (i == thread_count - 1) {
 			thread_data[i].end_row = height - 1;
 		}
 		pthread_create(threads + i, 0, find_header_thread,  thread_data + i);
@@ -291,7 +368,7 @@ t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) 
 	for (size_t i = 0; i < thread_count; i++) {
 		pthread_join(threads[i], 0);
 		if (thread_data[i].data) {
-			for (size_t j = i + i; j < thread_count; j++) {
+			for (size_t j = i + 1; j < thread_count; j++) {
 				pthread_join(threads[j], 0);
 			}
 			return (thread_data[i].data);
@@ -319,7 +396,9 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	
 	data = find_header_threaded(data, header.height, header.width);
 	//data = find_header(0, header.height - 1, data, header.width);
-	FT_ASSERT(data);
+	if (!data) {
+		return ;
+	}
 	uint16_t	len = ((uint16_t)data[7].r) + ((uint16_t)data[7].b);
 	data = skip_header(data, header.width);
 	size_t	alloc_size = (len + 32 + 15) & ~((size_t)15);
@@ -331,7 +410,7 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 		long long col = 0;
 		while (col < 6) {
 			long long i = -row * header.width + col;
-			if (len -out_i >= 6) {
+			if (len - out_i >= 6) {
 				__m128i val= _mm_loadu_si64(data + i);
 				_mm_storeu_si64(output + out_i, val);
 				output[out_i + 3] = output[out_i + 4];
@@ -349,29 +428,34 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 			} else if (len - out_i == 1) {
 				memcpy(output + out_i, data + i, 1);
 				goto ret;
+			} else if (len - out_i == 0) {
+				goto ret;
 			}
 		}
 		row++;
 	}
 ret:
 	write(1, output, len);
-	exit(0);
 }
 
-int	main(int argc, char** argv) {
-	if (argc != 2) {
-		PRINT_ERROR("Usage: decode <input_filename>\n");
-		return 1;
-	}
-	struct file_content file_content = read_entire_file(argv[1]);
+static __attribute__((always_inline))
+void	program(char *path) {
+	struct file_content file_content = read_entire_file(path);
 	if (file_content.data == NULL) {
 		PRINT_ERROR("Failed to read file\n");
-		return 1;
 	}
 	struct bmp_header header = ((struct bmp_header*) file_content.data)[0];
 
 	print_msg_basic(header, file_content);
+	free(file_content.data);
+}
 
-
+int	main(int argc, char** argv) {
+	errno = 0;
+	for (int i = 1; i < argc; i++) {
+		printf("%s:\n", argv[i]);
+		program(argv[i]);
+		printf("\n");
+	}
 	return 0;
 }
