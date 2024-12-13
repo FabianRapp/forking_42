@@ -93,6 +93,7 @@ int	possible_header_pixel(t_pixel p) {
 }
 
 /*todo: this is slow but should only matter for input crafted to breake this*/
+/*todo: handle if the input pixel is on the horizontal of the 'L' */
 t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long long width, long long height) {
 	long long	hheight = 1;
 
@@ -111,17 +112,22 @@ t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long lon
 	}
 	row = row + 7;
 	hheight -= 7;
-	while (hheight && row < height) {
-		for (size_t i = 0; i < 7; i++) {
-			if (!possible_header_pixel(data[col + row * width])) {
-				continue ;
+
+
+	if (col + 7 < width) {
+		while (hheight && row < height) {
+			for (long long i = 1; i < 7; i++) {
+				if (!possible_header_pixel(data[col + i + row * width])) {
+					continue ;
+				}
+				if (i == 6 && !possible_header_pixel(data[col + i + 1 + row * width])) {
+					printf("row: %lld\ncol: %lld\n", row, col);;
+					return (data + col + row * width);
+				}
 			}
-			if (i == 6) {
-				return (data + col + row * width);
-			}
+			row++;
+			hheight--;
 		}
-		row++;
-		hheight--;
 	}
 	return (NULL);
 }
@@ -261,7 +267,7 @@ void	*find_header_thread(void *args) {
 }
 
 t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
-	const u8		thread_count = 10;
+	const u8		thread_count = 1;
 	pthread_t		threads[thread_count];
 	t_thread_data	thread_data[thread_count];
 	long long		rows_per_thread = height / thread_count;
