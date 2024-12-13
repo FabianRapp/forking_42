@@ -235,20 +235,22 @@ int8_t	first_header_pixel(t_pixel *src) {
 		//print_128_8(data);
 		//print_128_8(cmp8);
 	}
+
 	/* unrolled loop duo to mandetory O0 flag and no other flags allowed */
 	if ((matches_bit_pattern & 0b1110) == 0b1110) {
 		return (0);
 	}
-	if ((matches_bit_pattern & 0b11100000) == 0b11100000) {
+	else if ((matches_bit_pattern & 0b11100000) == 0b11100000) {
 		return (1);
 	}
-	if ((matches_bit_pattern & 0b111000000000) == 0b111000000000) {
+	else if ((matches_bit_pattern & 0b111000000000) == 0b111000000000) {
 		return (2);
 	}
-	if ((matches_bit_pattern & 0b1110000000000000) == 0b1110000000000000) {
+	else if ((matches_bit_pattern & 0b1110000000000000) == 0b1110000000000000) {
 		return (3);
+	} else {
+		return (-1);
 	}
-	return (-1);
 }
 
 /*
@@ -302,20 +304,18 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 t_pixel	*find_header(long long start_row, long long end_row, long long height, t_pixel *data, long long width) {
 	FT_ASSERT(sizeof(t_pixel) == 4);
 	long long	row = start_row + 7;
-	//long long	row = start_row;
 	long long	next_end = end_row + HEADER_HEIGHT - (end_row % HEADER_HEIGHT);
 
 	next_end = next_end >= height ? height - 1 : next_end;
 	end_row = end_row % HEADER_HEIGHT ? next_end : end_row;
 	for (; row <= end_row; row += 8) {
-	//for (; row <= end_row; row += 1) {
 		FT_ASSERT(row >= 0);
 		FT_ASSERT(row < height);
 		t_pixel	*cur_row = data + row * width;
 		long long col =  0;
 		/* alignment, inefficient but not significant */
 		while (col < width && 0 != (((uintptr_t) (cur_row + col)) % 16)) {
-			if (possible_header_pixel(cur_row[col])) {
+			if (__builtin_expect(possible_header_pixel(cur_row[col]), 0)) {
 				t_pixel	*header = find_header_start(data, row, col, width, height);
 				if (header) {
 					return (header);
@@ -328,15 +328,15 @@ t_pixel	*find_header(long long start_row, long long end_row, long long height, t
 			if (col <= width - 4) {
 				FT_ASSERT(((uintptr_t)(cur_row + col)) % 16 == 0);
 				int8_t	tmp = first_header_pixel(cur_row + col);
-				if (tmp != -1) {
+				if (__builtin_expect(tmp != -1, 0)) {
 					t_pixel	*header = find_header_start(data, row, col + tmp, width, height);
-					if (header) {
+					if (__builtin_expect(header != NULL, 0)) {
 						return (header);
 					}
 				}
 				col += 4;
 			} else {
-				if (possible_header_pixel(cur_row[col])) {
+				if (__builtin_expect(possible_header_pixel(cur_row[col]), 0)) {
 					t_pixel	*header = find_header_start(data, row, col, width, height);
 					if (header) {
 						return (header);
@@ -414,7 +414,6 @@ typedef union u_row_data {
 	};
 }	 t_row_data;
 
-/*todo: don't allocate here, simply override the img buffer */
 void	print_msg_basic(struct bmp_header header, t_file file) {
 	t_pixel	*data =  (t_pixel *) (file.data + header.data_offset);
 	
@@ -425,8 +424,9 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 	}
 	uint16_t	len = ((uint16_t)data[7].r) + ((uint16_t)data[7].b);
 	data = skip_header(data, header.width);
-	size_t	alloc_size = (len + 32 + 15) & ~((size_t)15);
-	char	*output = aligned_alloc(16, alloc_size);
+	/*todo: could but the output ptr right where the data ptr is when removing
+	 * memcpy */
+	char	*output = file.data;
 	long long row = 0;
 	size_t	out_i = 0;
 
