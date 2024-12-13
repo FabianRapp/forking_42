@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define NDEBUG
 #include "libft_macros.h"
 #include <errno.h>
 
@@ -27,7 +29,6 @@ typedef unsigned long u64;
 #define HEADER_HEIGHT 8
 #define SIMD_ALIGNMENT 16
 
-#define NDEBUG
 
 typedef enum {
 	BLUE,
@@ -119,7 +120,7 @@ struct file_content   read_entire_file(char* filename) {
 
 static __attribute__((always_inline))
 int	possible_header_pixel(t_pixel p) {
-	if (p.b == 0x7f && p.g == 0xbc && p.r == 0xd9) {
+	if (p.b == 0x7f && p.g == 0xbc && p.r == 0xd9) {//this is barly used and has 5% run time
 		return (1);
 	}
 	return (0);
@@ -182,6 +183,7 @@ t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long lon
 	 * maybe this is handled in some way, I'm not sure
 	 */
 	while (row >= 0 && header_height < 8) {
+		/*todo: prefetch (14% runtime the line below) */
 		if (!possible_header_pixel(data[col + (row - header_height) * width])) {
 			break ;
 		}
@@ -201,8 +203,8 @@ t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long lon
 
 	row += 7;
 	/*and make a loop here while (header_heigh > 7) or somthign smimmliar */
-	if (col + 7 < width) {
-		for (long long i = 1; i < 7; i++) {
+	if (__builtin_expect(col + 7 < width, 1)) {
+		for (int8_t i = 1; i < 7; i++) {
 			if (!possible_header_pixel(data[col + i + row * width])) {
 				break ;
 			}
@@ -227,26 +229,27 @@ static __attribute__((always_inline))
 int8_t	first_header_pixel(t_pixel *src) {
 	FT_ASSERT(((uintptr_t)src) % 16 == 0);
 	__m128i	mask = _mm_set1_epi32(0x00d9bc7f);//4th byte does not matter
-	__m128i	data = _mm_load_si128((__m128i *)(src));//todo: should me load not loadu
-	__m128i	cmp8 = _mm_cmpeq_epi8(mask, data);
-	int16_t	matches_bit_pattern = _mm_movemask_epi8(cmp8);
-	if (matches_bit_pattern) {
-		//print_128_8(mask);
-		//print_128_8(data);
-		//print_128_8(cmp8);
-	}
+	__m128i	data = _mm_load_si128((__m128i *)(src));//42% todo: this data access iprefetchs the main bottleneck, prefetch?
+	__m128i	cmp8 = _mm_cmpeq_epi8(mask, data);//todo: is there a simd test rather than cmp, is it faster?
+	int16_t	matches_bit_pattern = _mm_movemask_epi8(cmp8);//11%
+	//if (matches_bit_pattern) {
+	//	//print_128_8(mask);
+	//	//print_128_8(data);
+	//	//print_128_8(cmp8);
+	//}
 
 	/* unrolled loop duo to mandetory O0 flag and no other flags allowed */
-	if ((matches_bit_pattern & 0b1110) == 0b1110) {
+	/* todo: is there some bit magic to make this a single return? */
+	if (__builtin_expect((matches_bit_pattern & 0b1110) == 0b1110, 0)) { // this line is slow for some reason
 		return (0);
 	}
-	else if ((matches_bit_pattern & 0b11100000) == 0b11100000) {
+	else if (__builtin_expect((matches_bit_pattern & 0b11100000) == 0b11100000, 0)) {//slow
 		return (1);
 	}
-	else if ((matches_bit_pattern & 0b111000000000) == 0b111000000000) {
+	else if (__builtin_expect((matches_bit_pattern & 0b111000000000) == 0b111000000000, 0)) { //this is slow
 		return (2);
 	}
-	else if ((matches_bit_pattern & 0b1110000000000000) == 0b1110000000000000) {
+	else if (__builtin_expect((matches_bit_pattern & 0b1110000000000000) == 0b1110000000000000, 0)) {//this line is slow
 		return (3);
 	} else {
 		return (-1);
@@ -328,6 +331,7 @@ t_pixel	*find_header(long long start_row, long long end_row, long long height, t
 			if (col <= width - 4) {
 				FT_ASSERT(((uintptr_t)(cur_row + col)) % 16 == 0);
 				int8_t	tmp = first_header_pixel(cur_row + col);
+				//if (__builtin_expect(tmp != -1, 0)) {
 				if (__builtin_expect(tmp != -1, 0)) {
 					t_pixel	*header = find_header_start(data, row, col + tmp, width, height);
 					if (__builtin_expect(header != NULL, 0)) {
@@ -475,8 +479,26 @@ void	program(char *path) {
 	free(file_content.data);
 }
 
+/*todo: use printable char range in bytes as hints where the header might be */
+
+#include <sys/time.h>
+
+
+void set_profiling_interval(int usec) {
+	struct itimerval timer;
+
+	timer.it_interval.tv_sec = 0;
+	timer.it_interval.tv_usec = usec;
+	timer.it_value.tv_sec = 0;
+	timer.it_value.tv_usec = usec;
+	setitimer(ITIMER_PROF, &timer, NULL);
+}
+
 //#undef NDEBUG
 int	main(int argc, char** argv) {
+	set_profiling_interval(10);
+	struct timeval	start;
+	gettimeofday(&start, 0);
 	errno = 0;
 	for (int i = 1; i < argc; i++) {
 
@@ -489,6 +511,11 @@ int	main(int argc, char** argv) {
 #else
 		//return 0;
 #endif
+		struct timeval end;
+		gettimeofday(&end, 0);
+		/* 0.13 - 0.3 seconds on my laptop for all bmp file
+		 * faster with a few seconds brakes after running the program;;13.12 */
+		printf("%ld sec and %ld micro sec\n", end.tv_sec - start.tv_sec, end.tv_usec - start.tv_usec);
 	}
 	return 0;
 }
