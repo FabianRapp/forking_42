@@ -34,15 +34,17 @@ TASK_COMPILE = gcc -O0 -Wall -Wextra -Werror main.c -o decoder -lpthread
 
 all: $(NAME)
 
+
+#-fsanitize=address
 $(NAME): main.c
-	gcc -O0 -Wall -Wextra -Werror -g -fsanitize=undefined main.c -o decoder -lpthread
+	gcc -O0 -Wall -Wextra -Werror -g  main.c -o decoder -lpthread
 	#$(CC) $(CFLAGS) $(OBJS) -o $(NAME) -lpthread 
 
 a:
 	gcc -O0 -Wall -Wextra -Werror main.c -o decoder -lpthread
 
 prof: main.c
-	gcc -O0 -Wall -Wextra -Werror -g -pg main.c -o decoder -lpthread
+	gcc -O0 -Wall -Wextra -Werror -D_PORFILER -DNDEBUG -g -pg main.c -o decoder -lpthread
 
 normal: $(NAME)
 	@echo "$(GREEN) Compiled $(NAME) $(CLEAR)"

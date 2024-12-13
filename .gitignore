@@ -4,4 +4,5 @@ objs/*
 decoder
 compile_commands.json
 *.dSYM/*
-libft/*
+libft
+.cache

@@ -8,9 +8,17 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
-#define NDEBUG
-#include "libft_macros.h"
+
+#ifndef NDEBUG
+# define NDEBUG
+#endif
+
+//from libft
+#include "timeval.c"
+/* only files pasted in here will work of libft */
+#include "libft.h"
 #include <errno.h>
 
 #pragma GCC diagnostic push
@@ -30,13 +38,6 @@ typedef unsigned long u64;
 #define SIMD_ALIGNMENT 16
 
 
-typedef enum {
-	BLUE,
-	GREEN,
-	RED,
-	COUNT,
-}	t_colors;
-
 typedef union u_pixel {
 	u32		raw;
 	struct {
@@ -45,9 +46,15 @@ typedef union u_pixel {
 		u8	r;
 		u8	a;
 	}__attribute__((packed));
+	u8		arr[4];
 }	__attribute__((packed)) t_pixel;
 
-#define PRINT_ERROR(cstring) write(STDERR_FILENO, cstring, sizeof(cstring) - 1)
+typedef struct {
+	t_pixel	*pixels;
+	size_t	width;
+	size_t	height;
+	void	*to_free;
+}	t_data;
 
 #pragma pack(1)
 struct bmp_header {
@@ -83,23 +90,24 @@ void	print_128_8(__m128i value) {
 	printf("\n");
 }
 
-/* todo: simpliy allocated memory mangment by removing the header here
-	and removing it from the logic later on*/
+
+
+/* can be refactored but fine for now */
 /* todo: for hure files don't read file in 1 go, read chunks and start threads
 	on those chunks before reading more chunks */
 static
-struct file_content   read_entire_file(char* filename) {
-	char* file_data = 0;
-	unsigned long	file_size = 0;
+t_data	read_entire_file(char* filename) {
+	t_data				ret = {0};
+	struct bmp_header	*header = NULL;
+
 	int input_file_fd = open(filename, O_RDONLY);
 	if (input_file_fd >= 0) {
 		struct stat input_file_stat = {0};
 		stat(filename, &input_file_stat);
 		if (1) {
 			size_t	alloc_size = (input_file_stat.st_size + 4 + 15) & ~((size_t)15);
-			struct bmp_header	*header = aligned_alloc(16, alloc_size);
+			header = aligned_alloc(16, alloc_size);
 			FT_ASSERT(header);
-			file_data = (char *)header;
 			read(input_file_fd, header, sizeof *header);
 			size_t	trash_len = header->data_offset - sizeof *header;
 			read(input_file_fd, header + sizeof *header, trash_len);
@@ -110,12 +118,18 @@ struct file_content   read_entire_file(char* filename) {
 			read(input_file_fd, ((char *)header) + header->data_offset, input_file_stat.st_size - sizeof *header);
 			close(input_file_fd);
 		} else {
-			file_size = (unsigned long)input_file_stat.st_size;
-			file_data = mmap(0, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, input_file_fd, 0);
+			/*leaks but it's only for debugging anyway */
+			header =
+				mmap(0, input_file_stat.st_size,
+						PROT_READ | PROT_WRITE, MAP_PRIVATE, input_file_fd, 0);
 		}
-		FT_ASSERT(errno == 0);
 	}
-	return (struct file_content){file_data, file_size};
+	ret.to_free = header;
+	ret.pixels = (t_pixel *)(((u8 *)ret.to_free) + header->data_offset);
+	ret.width = header->width;
+	ret.height = header->height;
+	FT_ASSERT(errno == 0);
+	return (ret);
 }
 
 static __attribute__((always_inline))
@@ -224,35 +238,30 @@ t_pixel	*find_header_start(t_pixel *data, long long row, long long col, long lon
  * -1 if there is no header pixel in the givne n bytes.
  * Assumes src to be 16 byte allinged data.
  * Searched for the 4 byte pattern 0x7bcd9 and the 4th byte anything.
+ * Assumes little endian.
 */
 static __attribute__((always_inline))
-int8_t	first_header_pixel(t_pixel *src) {
+int8_t	first_header_pixel(t_pixel *src) {// function entry about 0-7.7 %runtime?
 	FT_ASSERT(((uintptr_t)src) % 16 == 0);
-	__m128i	mask = _mm_set1_epi32(0x00d9bc7f);//4th byte does not matter
-	__m128i	data = _mm_load_si128((__m128i *)(src));//42% todo: this data access iprefetchs the main bottleneck, prefetch?
-	__m128i	cmp8 = _mm_cmpeq_epi8(mask, data);//todo: is there a simd test rather than cmp, is it faster?
-	int16_t	matches_bit_pattern = _mm_movemask_epi8(cmp8);//11%
-	//if (matches_bit_pattern) {
-	//	//print_128_8(mask);
-	//	//print_128_8(data);
-	//	//print_128_8(cmp8);
-	//}
+	__m128i	data = _mm_load_si128((__m128i *)(src));//0.333-0.555 or mem access speed, about 8-12%runtime
+	__m128i	care_bytes = _mm_set1_epi32(0x00ffffff);//non native, might be slow, about 3-8% runtime
+	data = _mm_and_si128(data, care_bytes);//0.333, about 8-12% runtime
+	__m128i	mask = _mm_set1_epi32(0x00d9bc7f);//non native, might be slow, about 0-3% runtime
+	__m128i	cmp = _mm_cmpeq_epi32(data, mask);//0.5, 0-8% runtime
+	int16_t	matches_bit_pattern = _mm_movemask_epi8(cmp);//1.0, about 8-17,6 % runtime
 
-	/* unrolled loop duo to mandetory O0 flag and no other flags allowed */
-	/* todo: is there some bit magic to make this a single return? */
-	if (__builtin_expect((matches_bit_pattern & 0b1110) == 0b1110, 0)) { // this line is slow for some reason
-		return (0);
+	//if (__builtin_expect(!matches_bit_pattern, true)) {
+	if (!matches_bit_pattern) {//about 12-15% runtime
+		return (-1); //between 0-15 % runtime ?
 	}
-	else if (__builtin_expect((matches_bit_pattern & 0b11100000) == 0b11100000, 0)) {//slow
-		return (1);
-	}
-	else if (__builtin_expect((matches_bit_pattern & 0b111000000000) == 0b111000000000, 0)) { //this is slow
-		return (2);
-	}
-	else if (__builtin_expect((matches_bit_pattern & 0b1110000000000000) == 0b1110000000000000, 0)) {//this line is slow
-		return (3);
-	} else {
-		return (-1);
+	/* not significant rune time */
+	uint8_t	trailing_zeros = __builtin_ctz(matches_bit_pattern);
+	switch (trailing_zeros) {
+		case (0): return (0);
+		case (4): return (1);
+		case (8): return (2);
+		case (12): return (3);
+		default: FT_ASSERT(0);
 	}
 }
 
@@ -357,48 +366,48 @@ t_pixel	*find_header(long long start_row, long long end_row, long long height, t
 }
 
 typedef struct {
-	t_pixel	*data;
-	long long width;
-	long long height;
-	long long start_row;
-	long long end_row;
+	t_pixel		*pixels;
+	long long	width;
+	long long 	height;
+	long long 	start_row;
+	long long 	end_row;
 }	t_thread_data;
 
 void	*find_header_thread(void *args) {
 	t_thread_data *data = (t_thread_data *)args;
-	data->data = find_header(data->start_row, data->end_row, data->height, data->data, data->width);
+	data->pixels = find_header(data->start_row, data->end_row, data->height, data->pixels, data->width);
 	return (0);
 }
 
-t_pixel	*find_header_threaded(t_pixel *data, long long height, long long width) {
-	const u8		thread_count = 10;
+t_pixel	*find_header_threaded(t_data data) {
+	const u8		thread_count = 1;
 	pthread_t		threads[thread_count];
 	t_thread_data	thread_data[thread_count];
-	long long		rows_per_thread = height / thread_count;
+	long long		rows_per_thread = data.height / thread_count;
 	long long		cur_start = 0;
 	
 #ifndef NDEBUG
 	printf("height: %lld; width: %lld\n", height, width);
 #endif
 	for (u8 i = 0; i < thread_count; i++) {
-		thread_data[i].width = width;
-		thread_data[i].height = height;
+		thread_data[i].width = data.width;
+		thread_data[i].height = data.height;
 		thread_data[i].start_row = cur_start;
 		cur_start += rows_per_thread;
 		thread_data[i].end_row = cur_start - 1;
-		thread_data[i].data = data;
+		thread_data[i].pixels = data.pixels;
 		if (i == thread_count - 1) {
-			thread_data[i].end_row = height - 1;
+			thread_data[i].end_row = data.height - 1;
 		}
 		pthread_create(threads + i, 0, find_header_thread,  thread_data + i);
 	}
 	for (size_t i = 0; i < thread_count; i++) {
 		pthread_join(threads[i], 0);
-		if (thread_data[i].data) {
+		if (thread_data[i].pixels) {
 			for (size_t j = i + 1; j < thread_count; j++) {
 				pthread_join(threads[j], 0);
 			}
-			return (thread_data[i].data);
+			return (thread_data[i].pixels);/*todo: async thread waiting for this address to change */
 		}
 	}
 	FT_ASSERT(0);
@@ -418,28 +427,27 @@ typedef union u_row_data {
 	};
 }	 t_row_data;
 
-void	print_msg_basic(struct bmp_header header, t_file file) {
-	t_pixel	*data =  (t_pixel *) (file.data + header.data_offset);
+void	print_msg_basic(t_data data) {
 	
-	data = find_header_threaded(data, header.height, header.width);
+	data.pixels = find_header_threaded(data);
 	//data = find_header(0, header.height - 1, data, header.width);
-	if (!data) {
+	if (!data.pixels) {
 		return ;
 	}
-	uint16_t	len = ((uint16_t)data[7].r) + ((uint16_t)data[7].b);
-	data = skip_header(data, header.width);
-	/*todo: could but the output ptr right where the data ptr is when removing
-	 * memcpy */
-	char	*output = file.data;
+	uint16_t	len = ((uint16_t)data.pixels[7].r) + ((uint16_t)data.pixels[7].b);
+	data.pixels = skip_header(data.pixels, data.width);
+	/* write right back to the data buffer because why not, be carefull with
+	 * memcpy since the memory region can overlap */
+	char	*output = (i8 *)data.pixels;
 	long long row = 0;
 	size_t	out_i = 0;
 
 	while (out_i < len) {
 		long long col = 0;
 		while (col < 6) {
-			long long i = -row * header.width + col;
+			long long i = -row * data.width + col;
 			if (len - out_i >= 6) {
-				__m128i val= _mm_loadu_si64(data + i);
+				__m128i val= _mm_loadu_si64(data.pixels + i);
 				_mm_storeu_si64(output + out_i, val);
 				output[out_i + 3] = output[out_i + 4];
 				output[out_i + 4] = output[out_i + 5];
@@ -447,14 +455,17 @@ void	print_msg_basic(struct bmp_header header, t_file file) {
 				out_i += 6;
 				col += 2;
 			} else if (len - out_i >= 3) {
-				memcpy(output + out_i, data + i, 3);
+				output[out_i] = data.pixels[i].arr[0];
+				output[out_i + 1] = data.pixels[i].arr[1];
+				output[out_i + 2] = data.pixels[i].arr[2];
 				out_i += 3;
 				col++;
 			} else if (len - out_i == 2) {
-				memcpy(output + out_i, data + i, 2);
+				output[out_i] = data.pixels[i].arr[0];
+				output[out_i + 1] = data.pixels[i].arr[1];
 				goto ret;
 			} else if (len - out_i == 1) {
-				memcpy(output + out_i, data + i, 1);
+				output[out_i] = data.pixels[i].arr[0];
 				goto ret;
 			} else if (len - out_i == 0) {
 				goto ret;
@@ -466,17 +477,25 @@ ret:
 	write(1, output, len);
 }
 
+#include <sys/wait.h>
 static __attribute__((always_inline))
 void	program(char *path) {
+	//pid_t	pid = fork();
 
-	struct file_content file_content = read_entire_file(path);
-	if (file_content.data == NULL) {
-		PRINT_ERROR("Failed to read file\n");
-	}
-	struct bmp_header header = ((struct bmp_header*) file_content.data)[0];
+	//if (pid) {
+	//	FT_ASSERT(pid > 0);
+	//	int	stat;
+	//	waitpid(pid, &stat, 0);
+	//	return ;
+	//}
 
-	print_msg_basic(header, file_content);
-	free(file_content.data);
+	t_data data = read_entire_file(path);
+	FT_ASSERT(data.to_free && data.pixels);
+
+	print_msg_basic(data);
+	free(data.to_free);
+
+	//exit(0);
 }
 
 /*todo: use printable char range in bytes as hints where the header might be */
@@ -484,38 +503,41 @@ void	program(char *path) {
 #include <sys/time.h>
 
 
-void set_profiling_interval(int usec) {
+#ifdef _PROFILER
+#undef NDEBUG
+void	set_profiling_interval(int usec) {
 	struct itimerval timer;
 
-	timer.it_interval.tv_sec = 0;
-	timer.it_interval.tv_usec = usec;
 	timer.it_value.tv_sec = 0;
 	timer.it_value.tv_usec = usec;
 	setitimer(ITIMER_PROF, &timer, NULL);
 }
 
-//#undef NDEBUG
 int	main(int argc, char** argv) {
 	set_profiling_interval(10);
+#else
+int	main(int argc, char** argv) {
+#endif //_PROFILER
+
 	struct timeval	start;
 	gettimeofday(&start, 0);
 	errno = 0;
-	for (int i = 1; i < argc; i++) {
-
+	for (size_t j = 0; j < 1; j++) {
+		for (int i = 1; i < argc; i++) {
 #ifndef NDEBUG
-		printf("%s:\n", argv[i]);
-#endif
-		program(argv[i]);
-#ifndef NDEBUG
-		printf("\n");
+			printf("%s:\n", argv[i]);
+			program(argv[i]);
+			printf("\n");
 #else
-		//return 0;
-#endif
-		struct timeval end;
-		gettimeofday(&end, 0);
-		/* 0.13 - 0.3 seconds on my laptop for all bmp file
-		 * faster with a few seconds brakes after running the program;;13.12 */
-		printf("%ld sec and %ld micro sec\n", end.tv_sec - start.tv_sec, end.tv_usec - start.tv_usec);
+			program(argv[i]);
+#endif //NDEBUG
+		}
 	}
-	return 0;
+	struct timeval	end;
+	gettimeofday(&end, 0);
+	struct timeval	diff = sub_timeval(end, start);
+	/* 0.13 - 0.3 seconds on my laptop for all bmp file
+	 * faster with a few seconds brakes after running the program;;13.12 */
+	printf("\ntotal runtime: %lf seconds\n", diff.tv_sec + diff.tv_usec / 1000000.0);
+	return (0);
 }
